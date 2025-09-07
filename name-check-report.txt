@@ -1,0 +1,56 @@
+# Name Check Report - Kijiweni to PixTv Max Conversion
+
+This report lists every file and line where the original app name "Kijiweni" or related terms were replaced with "PixTv Max".
+
+## Files Modified:
+
+
+
+### Frontend Changes:
+
+1. **pubspec.yaml**
+   - Line 1: Changed `name: kijweni_tv_max` to `name: pix_tv_max`
+   - Line 2: Changed `description: "KIJIWENI TV MAX - Premium Streaming App"` to `description: "PixTv Max - Premium Streaming App"`
+
+
+
+2. **lib/main.dart**
+   - Lines 3-12: Updated all import statements from `package:kijweni_tv_max/` to `package:pix_tv_max/`
+   - Line 20: Changed `KijweniTvMaxApp()` to `PixTvMaxApp()`
+   - Line 25: Changed class name from `KijweniTvMaxApp` to `PixTvMaxApp`
+   - Line 31: Changed app title from `'KIJIWENI TV MAX'` to `'PixTv Max'`
+   - Line 101: Changed AppBar title from `'KIJIWENI TV MAX'` to `'PixTv Max'`
+
+3. **All .dart files**
+   - Global replacement of all import statements from `package:kijweni_tv_max/` to `package:pix_tv_max/`
+
+4. **lib/screens/info_screen.dart**
+   - Line 216: Changed `'Bado haujajiunga na KijiweniTV Max'` to `'Bado haujajiunga na PixTv Max'`
+
+5. **lib/screens/paywall_screen.dart**
+   - Line 155: Changed `'Karibu KijiweniTV Max'` to `'Karibu PixTv Max'`
+
+6. **web/index.html**
+   - Line 24: Changed `content="kijweni_tv_max"` to `content="pix_tv_max"`
+   - Line 30: Changed `<title>kijweni_tv_max</title>` to `<title>pix_tv_max</title>`
+
+7. **web/manifest.json**
+   - Line 2: Changed `"name": "kijweni_tv_max"` to `"name": "pix_tv_max"`
+   - Line 3: Changed `"short_name": "kijweni_tv_max"` to `"short_name": "pix_tv_max"`
+   - Line 8: Changed description to `"PixTv Max - Premium Streaming App"`
+
+### Backend Changes:
+
+8. **package.json**
+   - Line 2: Changed `"name": "kijiweni-backend"` to `"name": "pix-tv-max-backend"`
+   - Line 4: Changed description from `"KIJIWENI TV MAX Backend Server..."` to `"PixTv Max Backend Server..."`
+   - Line 32: Changed keyword from `"kijiweni"` to `"pix-tv-max"`
+   - Line 34: Changed author from `"KIJIWENI Team"` to `"PixTv Max Team"`
+
+9. **server.js**
+   - Line 2: Changed header comment from `"KIJIWENI TV MAX Backend Server"` to `"PixTv Max Backend Server"`
+   - Line 344: Changed health check message from `"KIJIWENI Backend is running"` to `"PixTv Max Backend is running"`
+   - Line 1224: Changed admin email from `"admin@kijiweni.tv"` to `"admin@pixtvmax.tv"`
+   - Line 961: Changed buyer email domain from `"@kijiweni.tv"` to `"@pixtvmax.tv"`
+   - Line 1251: Changed startup message from `"KIJIWENI Backend server"` to `"PixTv Max Backend server"`
+

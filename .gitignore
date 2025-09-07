@@ -1,0 +1,5 @@
+# Dependencies - This folder can be huge and is recreated with 'npm install'
+node_modules/
+
+# Environment variables - Contains secret keys and should NEVER be on GitHub
+.env
