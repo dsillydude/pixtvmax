@@ -26,7 +26,7 @@ const app = express();
 // --- Middleware ------------------------------------------------------------
 app.use(helmet());
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://192.168.1.181:3000', 'http://192.168.1.181:3000'],
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['https://pixtvmax.onrender.com', 'https://pixtvmax.onrender.com'],
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
