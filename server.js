@@ -67,7 +67,7 @@ async function loadSettingsFromDatabase() {
 }
 
 // --- MongoDB Connection ----------------------------------------------------
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://mackdsilly:Ourfam2019@kijiwenitvmaxdb.9accsfs.mongodb.net/?retryWrites=true&w=majority&appName=kijiweniTvMaxDB';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://mackdsilly:Ourfam%402019@cluster0.lj9wanf.mongodb.net/YourDatabaseName?retryWrites=true&w=majority&appName=Cluster0';
 
 mongoose.connect(MONGODB_URI)
   .then(() => {
