@@ -323,19 +323,43 @@ let appSettings = {
 };
 
 // PUBLIC ENDPOINT: For the main app to get the config
-app.get('/api/config', (req, res) => {
-  res.json(appSettings);
+app.get('/api/config', async (req, res) => {
+  try {
+    const settings = await Setting.findOne({ key: 'appSettings' });
+    if (settings && settings.value) {
+      res.json(settings.value);
+    } else {
+      // Fallback to a default if nothing is in the database
+      res.json({ whatsappLink: 'https://wa.me/255712345678' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to load configuration' });
+  }
 });
 
 // ADMIN ENDPOINT: For the admin panel to update the config
-app.put('/api/admin/config', authenticateAdmin, (req, res) => {
-  const { whatsappLink } = req.body;
-  if (whatsappLink) {
-    appSettings.whatsappLink = whatsappLink;
-  }
-  res.json({ message: 'Settings updated successfully', settings: appSettings });
-});
+app.put('/api/admin/config', authenticateAdmin, async (req, res) => {
+  try {
+    const { whatsappLink } = req.body;
+    if (!whatsappLink) {
+      return res.status(400).json({ error: 'whatsappLink is required' });
+    }
 
+    // Find the setting and update it, or create it if it doesn't exist (upsert: true)
+    const updatedSettings = await Setting.findOneAndUpdate(
+      { key: 'appSettings' },
+      { $set: { value: { whatsappLink: whatsappLink } } },
+      { new: true, upsert: true }
+    );
+
+    res.json({ 
+      message: 'Settings updated successfully', 
+      settings: updatedSettings.value 
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
 // --- NEW: Public endpoint for the main app to fetch subscription plans ---
 app.get('/api/subscriptions/plans', async (req, res) => {
   try {
