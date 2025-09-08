@@ -336,6 +336,26 @@ app.put('/api/admin/config', authenticateAdmin, (req, res) => {
   res.json({ message: 'Settings updated successfully', settings: appSettings });
 });
 
+// --- NEW: Public endpoint for the main app to fetch subscription plans ---
+app.get('/api/subscriptions/plans', async (req, res) => {
+  try {
+    // We try to find the plans saved in the database first.
+    const plansSetting = await Setting.findOne({ key: 'subscriptionPlans' });
+
+    if (plansSetting && plansSetting.value) {
+      // If found in DB, return them
+      console.log('✅ Sent subscription plans from database.');
+      return res.json({ plans: plansSetting.value });
+    } else {
+      // As a fallback, if nothing is in the DB, return the default hardcoded plans.
+      console.log('⚠️ Sent default (fallback) subscription plans.');
+      return res.json({ plans: SUBSCRIPTION_PLANS });
+    }
+  } catch (error) {
+    console.error('❌ Error fetching subscription plans:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // Health Check
 app.get('/api/health', (req, res) => {
