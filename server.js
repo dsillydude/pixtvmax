@@ -45,41 +45,97 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// --- MongoDB Connection ----------------------------------------------------
-// 1. NEW: Database schema for storing settings
-const SettingSchema = new mongoose.Schema({
-  key: { type: String, unique: true, required: true },
-  value: { type: mongoose.Schema.Types.Mixed, required: true },
-});
-const Setting = mongoose.model('Setting', SettingSchema);
+// --- MongoDB Connection & Settings System ---------------------------------
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://mackdsilly:Ourfam%402019@cluster0.lj9wanf.mongodb.net/YourDatabaseName?retryWrites=true&w=majority&appName=Cluster0';
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-pixtv';
 
-// 2. NEW: Function to load settings from DB on startup
-async function loadSettingsFromDatabase() {
+// --- PATCH START: Replaced with Burudani's High-Performance Settings Cache ---
+const settingsSchema = new mongoose.Schema({
+  key: { type: String, required: true, unique: true },
+  value: { type: String, required: true }, // Store complex values as JSON strings
+  description: { type: String, default: '' },
+}, { timestamps: true });
+
+const Settings = mongoose.model('Setting', settingsSchema);
+
+const settingsCache = {
+  map: new Map(),
+  lastLoadedAt: 0,
+  ttlMs: Number(process.env.SETTINGS_CACHE_TTL_MS || 60000), // Cache for 60 seconds
+};
+
+async function hydrateSettingsCache() {
+  console.log('🔄 Refreshing settings cache...');
   try {
-    const plansSetting = await Setting.findOne({ key: 'subscriptionPlans' });
-    if (plansSetting) {
-      // If plans exist in the DB, use them
-      SUBSCRIPTION_PLANS = plansSetting.value;
-      console.log('✅ Subscription plans loaded from database.');
-    } else {
-      // If not, save the default hardcoded plans to the DB for the first time
-      await new Setting({ key: 'subscriptionPlans', value: SUBSCRIPTION_PLANS }).save();
-      console.log('✅ Default subscription plans saved to database for the first time.');
-    }
-  } catch (error) {
-    console.error('❌ Failed to load settings from database:', error);
+    const all = await Settings.find({}).lean();
+    settingsCache.map.clear();
+    for (const s of all) settingsCache.map.set(s.key, s.value);
+    settingsCache.lastLoadedAt = Date.now();
+    console.log(`✅ Settings cache refreshed with ${settingsCache.map.size} keys`);
+  } catch (err) {
+    console.error('❌ Cache hydration failed:', err.message);
+  }
+  return settingsCache.map.size;
+}
+
+async function ensureSettingsFresh() {
+  const now = Date.now();
+  if (now - settingsCache.lastLoadedAt > settingsCache.ttlMs) {
+    await hydrateSettingsCache();
   }
 }
 
-// --- MongoDB Connection ----------------------------------------------------
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://mackdsilly:Ourfam%402019@cluster0.lj9wanf.mongodb.net/YourDatabaseName?retryWrites=true&w=majority&appName=Cluster0';
+async function getSetting(key, fallback = null) {
+  await ensureSettingsFresh();
+  if (settingsCache.map.has(key)) return settingsCache.map.get(key);
+  // Fallback to DB if not in cache
+  const s = await Settings.findOne({ key }).lean();
+  if (s) {
+    settingsCache.map.set(s.key, s.value);
+    return s.value;
+  }
+  return fallback;
+}
+
+function setSettingInCache(key, value) {
+  settingsCache.map.set(key, value);
+  console.log(`📝 Cache updated: ${key} = ${value}`);
+}
+
+async function initializeDefaultSettings() {
+  try {
+    const settingsCount = await Settings.countDocuments();
+    if (settingsCount === 0) {
+      const defaults = [
+        { key: 'app_name', value: 'PixTv Max', description: 'Application name' },
+        {
+          key: 'subscription_packages',
+          value: JSON.stringify([
+            { name: 'Weekly', price: 1000, days: 7 },
+            { name: 'Monthly', price: 3000, days: 30 },
+            { name: 'Yearly', price: 30000, days: 365 },
+          ]),
+          description: 'Available subscription packages (JSON format)',
+        },
+        { key: 'whatsapp_link', value: 'https://wa.me/255712345678', description: 'Customer support WhatsApp link' },
+      ];
+      await Settings.insertMany(defaults);
+      console.log('✅ Default settings initialized in DB.');
+    }
+  } catch (error) {
+    console.error('❌ Error initializing default settings:', error);
+  }
+}
 
 mongoose.connect(MONGODB_URI)
   .then(() => {
     console.log('✅ Connected to MongoDB');
-    loadSettingsFromDatabase(); // Load settings after connecting to DB
+    initializeDefaultSettings()
+      .then(() => hydrateSettingsCache())
+      .catch(err => console.error('❌ Initial settings cache hydrate failed:', err.message));
   })
   .catch(err => console.error('❌ MongoDB connection error:', err));
+// --- PATCH END ---
 
 // --- Constants & Config for Paywall ------------------------------------
 const TRIAL_MINUTES = 0;
@@ -92,24 +148,22 @@ let SUBSCRIPTION_PLANS = {
 
 // --- Database Models -------------------------------------------------------
 
-// --- PATCH START: Modified User Schema for Fingerprinting ---
+// --- PATCH START: Updated User Schema for Burudani's Auth Logic ---
 const UserSchema = new mongoose.Schema({
-  id: { type: String, default: uuidv4, unique: true },
+  installationId: { type: String, unique: true, sparse: true }, // The new primary identifier from Burudani
   email: { type: String, unique: true, sparse: true },
-  password: { type: String },
-  phoneNumber: { type: String },
-  // deviceId is no longer unique, as multiple devices can report the same one.
-  deviceId: { type: String, required: true, index: true },
-  // The fingerprint is the new unique identifier for a device instance.
-  deviceFingerprint: { type: String, unique: true, required: true, index: true },
+  password: { type: String }, // For potential future email/password login
+  phoneNumber: { type: String, unique: true, sparse: true },
+  deviceId: { type: String, index: true, sparse: true }, // Legacy identifier
+  deviceFingerprint: { type: String, index: true, sparse: true }, // Legacy identifier
   isPremium: { type: Boolean, default: false },
   premiumExpiryDate: { type: Date },
-  createdAt: { type: Date, default: Date.now },
   lastLogin: { type: Date },
   isActive: { type: Boolean, default: true }
-});
-// --- PATCH END ---
+}, { timestamps: true }); // Using timestamps for createdAt/updatedAt
+
 const User = mongoose.model('User', UserSchema);
+// --- PATCH END ---
 
 // Admin Schema
 const AdminSchema = new mongoose.Schema({
@@ -183,32 +237,33 @@ const HeroBanner = mongoose.model('HeroBanner', HeroBannerSchema);
 
 // Payment Schema
 const PaymentSchema = new mongoose.Schema({
-  orderId: { type: String, required: true, unique: true }, 
-  userId: { type: String, required: true },
+  orderId: { type: String, required: true, unique: true },
+  userId: { type: String }, // Can be linked via token, but installationId is primary
+  installationId: { type: String, index: true }, // NEW: The primary link to a user installation
+  deviceId: { type: String, index: true }, // Legacy identifier
+  phoneNumber: { type: String, index: true }, // Stored for user lookup on webhook
   customerName: { type: String },
   amount: { type: Number, required: true },
   currency: { type: String, default: 'TZS' },
   paymentMethod: { type: String, default: 'ZenoPay' },
-  zenoTransactionId: { type: String }, 
+  zenoTransactionId: { type: String },
   status: { type: String, enum: ['pending', 'completed', 'failed'], default: 'pending' },
-  subscriptionType: { type: String, enum: ['weekly', 'monthly', 'yearly'], required: true },
+  subscriptionType: { type: String, required: true }, // No longer enum, uses value from settings
   createdAt: { type: Date, default: Date.now }
 });
 const Payment = mongoose.model('Payment', PaymentSchema);
 
 // --- Helper Functions ------------------------------------------------------
 
+// --- PATCH START: Merged Helper from Burudani and PixTv ---
 function transformDoc(doc) {
   if (!doc) return null;
   const obj = doc.toObject ? doc.toObject() : { ...doc };
 
-  const isChannel = obj.hasOwnProperty('channelId') || obj.hasOwnProperty('playbackUrl') || obj.hasOwnProperty('position');
-
+  // Retain PixTv's specific channel transformation logic
+  const isChannel = obj.hasOwnProperty('channelId') || obj.hasOwnProperty('playbackUrl');
   if (isChannel) {
-    if (!obj.playbackUrl && obj.streamUrl) {
-      obj.playbackUrl = obj.streamUrl;
-    }
-
+    if (!obj.playbackUrl && obj.streamUrl) obj.playbackUrl = obj.streamUrl;
     if (!obj.drm) {
       obj.drm = {
         enabled: obj.drmEnabled || false,
@@ -220,12 +275,14 @@ function transformDoc(doc) {
     delete obj.drmKey;
   }
 
+  // Use Burudani's standard transformations
+  obj.id = obj._id?.toString() || obj.id;
   delete obj.password;
-  delete obj.__v;
   delete obj._id;
-
+  delete obj.__v;
   return obj;
 }
+// --- PATCH END ---
 
 function transformArray(docs) {
   return (docs || []).map(transformDoc);
@@ -243,8 +300,8 @@ function generateToken(user, isAdmin = false) {
     isPremium: user.isPremium
   };
 
-  return jwt.sign(payload, process.env.JWT_SECRET, { 
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d' 
+  return jwt.sign(payload, JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || '7d'
   });
 }
 
@@ -257,7 +314,7 @@ function authenticateToken(req, res, next) {
     return res.status(401).json({ error: 'Access token required' });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+  jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
@@ -275,7 +332,7 @@ function authenticateAdmin(req, res, next) {
     return res.status(401).json({ error: 'Admin access token required' });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
+  jwt.verify(token, JWT_SECRET, async (err, decoded) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid or expired admin token' });
     }
@@ -309,7 +366,7 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage: storage,
   limits: {
     fileSize: 5 * 1024 * 1024 // 5MB limit
@@ -361,9 +418,9 @@ app.put('/api/admin/config', authenticateAdmin, async (req, res) => {
       { new: true, upsert: true }
     );
 
-    res.json({ 
-      message: 'Settings updated successfully', 
-      settings: updatedSettings.value 
+    res.json({
+      message: 'Settings updated successfully',
+      settings: updatedSettings.value
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to save settings' });
@@ -401,64 +458,74 @@ app.get('/api/health', (req, res) => {
 
 // --- Authentication Routes (Existing) --------------------------------------
 
-// --- PATCH START: Patched device-login to use fingerprinting ---
+// --- PATCH START: Replaced with Burudani's Unified Authentication Logic ---
 app.post('/api/auth/device-login', async (req, res) => {
-    try {
-        const { deviceId } = req.body;
-
-        if (!deviceId) {
-            return res.status(400).json({ error: 'deviceId is required' });
-        }
-
-        // 1. Capture extra data for the fingerprint
-        const userAgent = req.headers['user-agent'] || 'unknown';
-        const ip = req.ip;
-
-        // 2. Create a unique, consistent fingerprint for this device instance
-        const fingerprint = crypto.createHash('sha256')
-            .update(deviceId + userAgent + ip)
-            .digest('hex');
-
-        // 3. Find the user by the unique fingerprint, not the potentially shared deviceId
-        let user = await User.findOne({ deviceFingerprint: fingerprint });
-
-        if (user) {
-            // User found, update their last login time
-            user.lastLogin = new Date();
-            await user.save();
-        } else {
-            // No user with this fingerprint exists, so it's a new unique device.
-            // Create a new user record.
-            user = new User({
-                deviceId: deviceId, // Store the original deviceId
-                deviceFingerprint: fingerprint, // Store the new unique fingerprint
-                lastLogin: new Date(),
-                isPremium: false
-            });
-            await user.save();
-        }
-
-        // 4. Generate a token and send the response
-        const token = generateToken(user);
-        res.json({
-            message: 'Login successful',
-            user: transformDoc(user),
-            token
-        });
-    } catch (error) {
-        console.error('Device login error:', error);
-        // Provide a more specific error if it's a duplicate key error from a hash collision (extremely rare)
-        if (error.code === 11000) {
-            return res.status(500).json({ error: 'A unique user could not be created. Please try again.' });
-        }
-        res.status(500).json({ error: 'Internal server error' });
+  try {
+    const { installationId, deviceId } = req.body;
+    if (!installationId) {
+      return res.status(400).json({ error: 'installationId is required' });
     }
+
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    const ip = req.ip;
+    const fingerprint = crypto.createHash('sha256')
+      .update((deviceId || '') + userAgent + ip)
+      .digest('hex');
+
+    let user = null;
+
+    // Step 1: Primary Search -> Look for user by installationId
+    user = await User.findOne({ installationId });
+
+    if (user) {
+      // Found user. Update legacy info and last login.
+      user.deviceId = deviceId;
+      user.deviceFingerprint = fingerprint;
+      user.lastLogin = new Date();
+      await user.save();
+    } else {
+      // Step 2: Fallback Search -> Look for legacy user by fingerprint/deviceId
+      user = await User.findOne({
+        $or: [
+          { deviceId: deviceId },
+          { deviceFingerprint: fingerprint }
+        ]
+      });
+
+      if (user) {
+        // Step 3: MERGE/UPGRADE -> Found legacy user, add the new installationId
+        user.installationId = installationId;
+        user.lastLogin = new Date();
+        await user.save();
+      } else {
+        // Step 4: CREATE NEW USER -> Genuinely new installation
+        user = new User({
+          installationId,
+          deviceId,
+          deviceFingerprint: fingerprint,
+          lastLogin: new Date(),
+          isPremium: false
+        });
+        await user.save();
+      }
+    }
+
+    const token = generateToken(user);
+    res.json({ message: 'Login successful', user: transformDoc(user), token });
+
+  } catch (error) {
+    console.error('Unified device login error:', error);
+    if (error.code === 11000) {
+      return res.status(500).json({ error: 'Duplicate key error. Please try again.' });
+    }
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 // --- PATCH END ---
 
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
-    const user = await User.findOne({ id: req.user.userId });
+    const user = await User.findOne({ _id: req.user.userId });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -479,9 +546,9 @@ app.post('/api/admin/login', async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
 
-    const admin = await Admin.findOne({ 
+    const admin = await Admin.findOne({
       $or: [{ username }, { email: username }],
-      isActive: true 
+      isActive: true
     });
 
     if (!admin) {
@@ -524,18 +591,18 @@ app.get('/api/admin/me', authenticateAdmin, async (req, res) => {
 // --- Admin User Management Routes ------------------------------------------
 app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
   try {
-    const { 
-      page = 1, 
-      limit = 20, 
-      search = '', 
-      isPremium, 
+    const {
+      page = 1,
+      limit = 20,
+      search = '',
+      isPremium,
       isActive,
       sortBy = 'createdAt',
       sortOrder = 'desc'
     } = req.query;
 
     const filter = {};
-    
+
     if (search) {
       filter.$or = [
         { email: { $regex: search, $options: 'i' } },
@@ -593,13 +660,13 @@ app.get('/api/admin/users/stats', authenticateAdmin, async (req, res) => {
       User.countDocuments(),
       User.countDocuments({ isActive: true }),
       User.countDocuments({ isPremium: true }),
-      User.countDocuments({ 
+      User.countDocuments({
         createdAt: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) }
       }),
-      User.countDocuments({ 
+      User.countDocuments({
         createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
       }),
-      User.countDocuments({ 
+      User.countDocuments({
         createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
       })
     ]);
@@ -623,7 +690,7 @@ app.get('/api/admin/users/stats', authenticateAdmin, async (req, res) => {
 app.put('/api/admin/users/:id/premium', authenticateAdmin, async (req, res) => {
   try {
     const { isPremium, subscriptionType = 'monthly' } = req.body;
-    const user = await User.findOne({ id: req.params.id });
+    const user = await User.findById(req.params.id);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -632,14 +699,17 @@ app.put('/api/admin/users/:id/premium', authenticateAdmin, async (req, res) => {
     user.isPremium = isPremium;
 
     if (isPremium && subscriptionType) {
-      const plan = SUBSCRIPTION_PLANS[subscriptionType];
-      if (plan) {
-        const now = new Date();
-        const startDate = user.premiumExpiryDate > now ? user.premiumExpiryDate : now;
-        user.premiumExpiryDate = new Date(startDate.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
-      }
+        const plansString = await getSetting('subscription_packages', JSON.stringify([]));
+        const plans = JSON.parse(plansString);
+        const plan = plans.find(p => p.name.toLowerCase() === subscriptionType.toLowerCase());
+
+        if (plan) {
+            const now = new Date();
+            const startDate = user.premiumExpiryDate > now ? user.premiumExpiryDate : now;
+            user.premiumExpiryDate = new Date(startDate.getTime() + plan.days * 24 * 60 * 60 * 1000);
+        }
     } else if (!isPremium) {
-      user.premiumExpiryDate = null;
+        user.premiumExpiryDate = null;
     }
 
     await user.save();
@@ -654,11 +724,12 @@ app.put('/api/admin/users/:id/premium', authenticateAdmin, async (req, res) => {
   }
 });
 
+
 app.put('/api/admin/users/:id/status', authenticateAdmin, async (req, res) => {
   try {
     const { isActive } = req.body;
-    const user = await User.findOneAndUpdate(
-      { id: req.params.id },
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
       { isActive },
       { new: true }
     );
@@ -685,8 +756,8 @@ app.put('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
     if (email !== undefined) updateData.email = email;
     if (phoneNumber !== undefined) updateData.phoneNumber = phoneNumber;
 
-    const user = await User.findOneAndUpdate(
-      { id: req.params.id },
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
       updateData,
       { new: true }
     );
@@ -706,40 +777,30 @@ app.put('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
 });
 
 // --- Admin Subscription Management Routes ----------------------------------
-app.get('/api/admin/subscriptions', authenticateAdmin, (req, res) => {
-  res.json({
-    plans: SUBSCRIPTION_PLANS
-  });
+app.get('/api/admin/subscriptions', authenticateAdmin, async (req, res) => {
+    const plansString = await getSetting('subscription_packages', JSON.stringify([]));
+    res.json({ plans: JSON.parse(plansString) });
 });
 
 app.put('/api/admin/subscriptions', authenticateAdmin, async (req, res) => {
   try {
     const { plans } = req.body;
 
-    if (!plans || typeof plans !== 'object') {
-      return res.status(400).json({ error: 'Invalid plans data' });
+    if (!Array.isArray(plans)) {
+      return res.status(400).json({ error: 'Invalid plans data, must be an array.' });
     }
-
-    // Validation (no change)
-    for (const [key, plan] of Object.entries(plans)) {
-      if (!plan.durationDays || !plan.amount || typeof plan.durationDays !== 'number' || typeof plan.amount !== 'number') {
-        return res.status(400).json({ error: `Invalid plan structure for ${key}` });
-      }
-    }
-
-    // Save the updated plans to the database
-    await Setting.findOneAndUpdate(
-        { key: 'subscriptionPlans' },
-        { value: plans },
-        { upsert: true, new: true } // upsert:true creates the document if it doesn't exist
+    
+    await Settings.findOneAndUpdate(
+        { key: 'subscription_packages' },
+        { value: JSON.stringify(plans) },
+        { upsert: true, new: true }
     );
-
-    // Also update the in-memory variable for immediate access
-    SUBSCRIPTION_PLANS = plans;
+    
+    setSettingInCache('subscription_packages', JSON.stringify(plans));
 
     res.json({
       message: 'Subscription plans updated and saved successfully',
-      plans: SUBSCRIPTION_PLANS
+      plans: plans
     });
   } catch (error) {
     console.error('Subscription update error:', error);
@@ -766,11 +827,11 @@ app.get('/api/admin/payments/stats', authenticateAdmin, async (req, res) => {
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]),
       Payment.aggregate([
-        { 
-          $match: { 
+        {
+          $match: {
             status: 'completed',
             createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
-          } 
+          }
         },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ])
@@ -792,9 +853,9 @@ app.get('/api/admin/payments/stats', authenticateAdmin, async (req, res) => {
 
 app.get('/api/admin/payments', authenticateAdmin, async (req, res) => {
   try {
-    const { 
-      page = 1, 
-      limit = 20, 
+    const {
+      page = 1,
+      limit = 20,
       status,
       subscriptionType,
       sortBy = 'createdAt',
@@ -802,7 +863,7 @@ app.get('/api/admin/payments', authenticateAdmin, async (req, res) => {
     } = req.query;
 
     const filter = {};
-    
+
     if (status) filter.status = status;
     if (subscriptionType) filter.subscriptionType = subscriptionType;
 
@@ -838,7 +899,7 @@ app.get('/api/admin/payments', authenticateAdmin, async (req, res) => {
 app.put('/api/admin/channels/:id/content', authenticateAdmin, async (req, res) => {
   try {
     const { contentIds } = req.body;
-    
+
     if (!Array.isArray(contentIds)) {
       return res.status(400).json({ error: 'contentIds must be an array' });
     }
@@ -933,7 +994,7 @@ app.post('/api/admin/banners', authenticateAdmin, async (req, res) => {
 app.put('/api/admin/banners/:id', authenticateAdmin, async (req, res) => {
   try {
     const { title, description, actionType, actionValue, imageUrl, isActive, position } = req.body;
-    
+
     const updateData = {};
     if (title !== undefined) updateData.title = title;
     if (description !== undefined) updateData.description = description;
@@ -1001,7 +1062,7 @@ app.post('/api/admin/upload', authenticateAdmin, upload.single('image'), (req, r
 // --- Existing Routes (Content Management, Payment, etc.) -------------------
 app.post('/api/users/update-watch-time', authenticateToken, async (req, res) => {
     try {
-        const user = await User.findOne({ id: req.user.userId });
+        const user = await User.findById(req.user.userId);
         if (!user) return res.status(404).json({ error: 'User not found' });
 
         if (user.isPremium && (!user.premiumExpiryDate || new Date(user.premiumExpiryDate) > new Date())) {
@@ -1016,32 +1077,42 @@ app.post('/api/users/update-watch-time', authenticateToken, async (req, res) => 
 
 // Payment Routes
 app.post('/api/payment/initiate-zenopay', authenticateToken, async (req, res) => {
-    const { customerName, phoneNumber, subscriptionType } = req.body;
-    const user = await User.findOne({ id: req.user.userId });
-
-    if (!customerName || !phoneNumber || !subscriptionType || !SUBSCRIPTION_PLANS[subscriptionType]) {
-        return res.status(400).json({ error: 'Invalid request details. Name, phone, and plan are required.' });
+    const { customerName, phoneNumber, subscriptionType, installationId, deviceId } = req.body;
+    
+    // installationId is now the most important piece of info
+    if (!customerName || !phoneNumber || !subscriptionType || !installationId) {
+        return res.status(400).json({ error: 'Invalid request. Name, phone, plan, and installationId are required.' });
     }
 
-    const plan = SUBSCRIPTION_PLANS[subscriptionType];
+    const plansString = await getSetting('subscription_packages', '[]');
+    const plans = JSON.parse(plansString);
+    const plan = plans.find(p => p.name.toLowerCase() === subscriptionType.toLowerCase());
+
+    if (!plan) {
+        return res.status(400).json({ error: `Subscription plan '${subscriptionType}' not found.` });
+    }
+
     const orderId = uuidv4();
 
+    // Create a new Payment record with all available identifiers
     await new Payment({
         orderId,
-        userId: user.id,
+        userId: req.user.userId, // The MongoDB _id from the token
+        installationId: installationId, // The new primary identifier
+        deviceId: deviceId, // The legacy identifier
+        phoneNumber: phoneNumber, // The phone number used for payment
         customerName: customerName,
-        amount: plan.amount,
-        subscriptionType,
+        amount: plan.price,
+        subscriptionType: plan.name,
         status: 'pending',
     }).save();
 
     const zenoPayload = {
         order_id: orderId,
-        buyer_email: user.email || `${user.deviceId}@pixtvmax.tv`,
         buyer_name: customerName,
         buyer_phone: phoneNumber,
-        amount: plan.amount,
-        webhook_url: `${process.env.YOUR_BACKEND_URL}/api/payment/zenopay-webhook`
+        amount: plan.price,
+        webhook_url: `${process.env.YOUR_BACKEND_URL || 'https://pixtvmax-backend.onrender.com'}/api/payment/zenopay-webhook`
     };
 
     try {
@@ -1065,30 +1136,24 @@ app.post('/api/payment/initiate-zenopay', authenticateToken, async (req, res) =>
 });
 
 app.post('/api/payment/zenopay-webhook', async (req, res) => {
-    // Log every incoming webhook attempt to help with debugging
     console.log('--- ZenoPay Webhook Received ---');
-    console.log('Headers:', req.headers);
     console.log('Body:', req.body);
 
-   const { order_id, payment_status, reference } = req.body;
-if (!order_id || !payment_status) {
-    console.warn('Webhook received with missing order_id or payment_status.');
-    return res.status(400).send('Bad Request: Missing required fields.');
-}
-    
-    console.log(`Processing webhook for order ${order_id}, status: ${payment_status}`);
+    const { order_id, payment_status, reference } = req.body;
+    if (!order_id || !payment_status) {
+        return res.status(400).send('Bad Request: Missing required fields.');
+    }
 
-    // --- Logic with Error Handling ---
     try {
         if (payment_status === 'COMPLETED') {
             const payment = await Payment.findOne({ orderId: order_id });
 
             if (!payment) {
-                console.warn(`Webhook for unknown Order ID received: ${order_id}. Acknowledging.`);
+                console.warn(`Webhook for unknown Order ID received: ${order_id}.`);
                 return res.status(200).send('Acknowledged (Order not found)');
             }
             if (payment.status === 'completed') {
-                console.log(`Webhook for already completed Order ID received: ${order_id}. Acknowledging.`);
+                console.log(`Webhook for already completed Order ID received: ${order_id}.`);
                 return res.status(200).send('Acknowledged (Already completed)');
             }
 
@@ -1097,28 +1162,45 @@ if (!order_id || !payment_status) {
             await payment.save();
             console.log(`Payment record for ${order_id} updated to 'completed'.`);
 
-            const user = await User.findOne({ id: payment.userId });
+            // NEW: Find the user using the most reliable identifiers from the payment record
+            const user = await User.findOne({
+              $or: [
+                { installationId: payment.installationId },
+                { phoneNumber: payment.phoneNumber },
+                { deviceId: payment.deviceId }
+              ].filter(cond => Object.values(cond)[0]) // Filters out any null/undefined identifiers
+            });
+            
             if (user) {
-                const plan = SUBSCRIPTION_PLANS[payment.subscriptionType];
-                const now = new Date();
-                const startDate = user.premiumExpiryDate && user.premiumExpiryDate > now ? user.premiumExpiryDate : now;
+                const plansString = await getSetting('subscription_packages', '[]');
+                const plans = JSON.parse(plansString);
+                const plan = plans.find(p => p.name.toLowerCase() === payment.subscriptionType.toLowerCase());
+                
+                if(plan) {
+                    const now = new Date();
+                    const startDate = user.premiumExpiryDate && user.premiumExpiryDate > now ? user.premiumExpiryDate : now;
 
-                user.isPremium = true;
-                user.premiumExpiryDate = new Date(startDate.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
-                await user.save();
-
-                console.log(`SUCCESS: User ${user.id} upgraded to premium. New expiry: ${user.premiumExpiryDate}`);
+                    user.isPremium = true;
+                    user.premiumExpiryDate = new Date(startDate.getTime() + plan.days * 24 * 60 * 60 * 1000);
+                    
+                    if (!user.phoneNumber && payment.phoneNumber) {
+                        user.phoneNumber = payment.phoneNumber;
+                    }
+                    
+                    await user.save();
+                    console.log(`SUCCESS: User ${user.id} upgraded to premium. New expiry: ${user.premiumExpiryDate}`);
+                } else {
+                     console.error(`CRITICAL: Could not find subscription plan '${payment.subscriptionType}' for completed payment ${order_id}.`);
+                }
             } else {
-                console.error(`CRITICAL: Could not find user with ID ${payment.userId} for completed payment ${order_id}.`);
+                console.error(`CRITICAL: Could not find user for payment ${order_id}. Identifiers: instId=${payment.installationId}, phone=${payment.phoneNumber}, devId=${payment.deviceId}`);
             }
         } else {
              console.log(`Received non-completed status '${payment_status}' for order ${order_id}. No action taken.`);
         }
-
         res.status(200).send('Webhook processed successfully');
-
     } catch (error) {
-        console.error(`CRITICAL ERROR while processing webhook for order ${order_id}:`, error);
+        console.error(`CRITICAL ERROR processing webhook for order ${order_id}:`, error);
         res.status(500).send('Internal Server Error');
     }
 });
