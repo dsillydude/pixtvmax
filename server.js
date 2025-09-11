@@ -45,97 +45,38 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// --- MongoDB Connection & Settings System ---------------------------------
+// --- MongoDB Connection & Settings System (Restored from working version) ---
 const MONGODB_URI = process.env.MONGODB_URI || 'MONGODB_URI=mongodb+srv://burudani_admin:AqkY8hMXOLHQsyBi@burudanidb.s3dwuen.mongodb.net/?retryWrites=true&w=majority&appName=BurudaniDB';
 const JWT_SECRET = process.env.JWT_SECRET || 'Tatianna@2021';
 
-// --- PATCH START: Replaced with Burudani's High-Performance Settings Cache ---
-const settingsSchema = new mongoose.Schema({
-  key: { type: String, required: true, unique: true },
-  value: { type: String, required: true }, // Store complex values as JSON strings
-  description: { type: String, default: '' },
-}, { timestamps: true });
+const SettingSchema = new mongoose.Schema({
+  key: { type: String, unique: true, required: true },
+  value: { type: mongoose.Schema.Types.Mixed, required: true },
+});
+const Setting = mongoose.model('Setting', SettingSchema);
 
-const Settings = mongoose.model('Setting', settingsSchema);
-
-const settingsCache = {
-  map: new Map(),
-  lastLoadedAt: 0,
-  ttlMs: Number(process.env.SETTINGS_CACHE_TTL_MS || 60000), // Cache for 60 seconds
-};
-
-async function hydrateSettingsCache() {
-  console.log('🔄 Refreshing settings cache...');
+async function loadSettingsFromDatabase() {
   try {
-    const all = await Settings.find({}).lean();
-    settingsCache.map.clear();
-    for (const s of all) settingsCache.map.set(s.key, s.value);
-    settingsCache.lastLoadedAt = Date.now();
-    console.log(`✅ Settings cache refreshed with ${settingsCache.map.size} keys`);
-  } catch (err) {
-    console.error('❌ Cache hydration failed:', err.message);
-  }
-  return settingsCache.map.size;
-}
-
-async function ensureSettingsFresh() {
-  const now = Date.now();
-  if (now - settingsCache.lastLoadedAt > settingsCache.ttlMs) {
-    await hydrateSettingsCache();
-  }
-}
-
-async function getSetting(key, fallback = null) {
-  await ensureSettingsFresh();
-  if (settingsCache.map.has(key)) return settingsCache.map.get(key);
-  // Fallback to DB if not in cache
-  const s = await Settings.findOne({ key }).lean();
-  if (s) {
-    settingsCache.map.set(s.key, s.value);
-    return s.value;
-  }
-  return fallback;
-}
-
-function setSettingInCache(key, value) {
-  settingsCache.map.set(key, value);
-  console.log(`📝 Cache updated: ${key} = ${value}`);
-}
-
-async function initializeDefaultSettings() {
-  try {
-    const settingsCount = await Settings.countDocuments();
-    if (settingsCount === 0) {
-      const defaults = [
-        { key: 'app_name', value: 'PixTv Max', description: 'Application name' },
-        {
-          key: 'subscription_packages',
-          value: JSON.stringify([
-            { name: 'Weekly', price: 1000, days: 7 },
-            { name: 'Monthly', price: 3000, days: 30 },
-            { name: 'Yearly', price: 30000, days: 365 },
-          ]),
-          description: 'Available subscription packages (JSON format)',
-        },
-        { key: 'whatsapp_link', value: 'https://wa.me/255712345678', description: 'Customer support WhatsApp link' },
-      ];
-      await Settings.insertMany(defaults);
-      console.log('✅ Default settings initialized in DB.');
+    const plansSetting = await Setting.findOne({ key: 'subscriptionPlans' });
+    if (plansSetting) {
+      SUBSCRIPTION_PLANS = plansSetting.value;
+      console.log('✅ Subscription plans loaded from database.');
+    } else {
+      await new Setting({ key: 'subscriptionPlans', value: SUBSCRIPTION_PLANS }).save();
+      console.log('✅ Default subscription plans saved to database for the first time.');
     }
   } catch (error) {
-    console.error('❌ Error initializing default settings:', error);
+    console.error('❌ Failed to load settings from database:', error);
   }
 }
 
 mongoose.connect(MONGODB_URI)
   .then(() => {
     console.log('✅ Connected to MongoDB');
-    initializeDefaultSettings()
-      .then(() => hydrateSettingsCache())
-      .catch(err => console.error('❌ Initial settings cache hydrate failed:', err.message));
+    loadSettingsFromDatabase(); // Load settings after connecting to DB
   })
   .catch(err => console.error('❌ MongoDB connection error:', err));
-// --- PATCH END ---
+
 
 // --- Constants & Config for Paywall ------------------------------------
 const TRIAL_MINUTES = 0;
@@ -382,20 +323,13 @@ const upload = multer({
 
 // --- API Routes ------------------------------------------------------------
 
-// --- App Configuration ---
-// For now, we store this in memory. For a real app, you would store this in a new 'settings' collection in your database.
-let appSettings = {
-  whatsappLink: 'https://wa.me/255712345678' // <-- SET YOUR DEFAULT WHATSAPP NUMBER HERE
-};
-
-// PUBLIC ENDPOINT: For the main app to get the config
+// --- App Configuration Routes (Restored from working version) ---
 app.get('/api/config', async (req, res) => {
   try {
-    const settings = await Settings.findOne({ key: 'whatsapp_link' });
-if (settings && settings.value) {
-  res.json({ whatsappLink: settings.value });
-}else {
-      // Fallback to a default if nothing is in the database
+    const settings = await Setting.findOne({ key: 'appSettings' });
+    if (settings && settings.value) {
+      res.json(settings.value);
+    } else {
       res.json({ whatsappLink: 'https://wa.me/255712345678' });
     }
   } catch (error) {
@@ -403,21 +337,17 @@ if (settings && settings.value) {
   }
 });
 
-// ADMIN ENDPOINT: For the admin panel to update the config
 app.put('/api/admin/config', authenticateAdmin, async (req, res) => {
   try {
     const { whatsappLink } = req.body;
     if (!whatsappLink) {
       return res.status(400).json({ error: 'whatsappLink is required' });
     }
-
-    // Find the setting and update it, or create it if it doesn't exist (upsert: true)
     const updatedSettings = await Setting.findOneAndUpdate(
       { key: 'appSettings' },
       { $set: { value: { whatsappLink: whatsappLink } } },
       { new: true, upsert: true }
     );
-
     res.json({
       message: 'Settings updated successfully',
       settings: updatedSettings.value
@@ -426,23 +356,53 @@ app.put('/api/admin/config', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Failed to save settings' });
   }
 });
-// --- NEW: Public endpoint for the main app to fetch subscription plans ---
+
 app.get('/api/subscriptions/plans', async (req, res) => {
   try {
-    // We try to find the plans saved in the database first.
-    const plansSetting = await Settings.findOne({ key: 'subscription_packages' });
-
+    const plansSetting = await Setting.findOne({ key: 'subscriptionPlans' });
     if (plansSetting && plansSetting.value) {
-      // If found in DB, return them
       console.log('✅ Sent subscription plans from database.');
       return res.json({ plans: plansSetting.value });
     } else {
-      // As a fallback, if nothing is in the DB, return the default hardcoded plans.
       console.log('⚠️ Sent default (fallback) subscription plans.');
       return res.json({ plans: SUBSCRIPTION_PLANS });
     }
   } catch (error) {
     console.error('❌ Error fetching subscription plans:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/admin/subscriptions', authenticateAdmin, (req, res) => {
+  res.json({
+    plans: SUBSCRIPTION_PLANS
+  });
+});
+
+app.put('/api/admin/subscriptions', authenticateAdmin, async (req, res) => {
+  try {
+    const { plans } = req.body;
+    if (!plans || typeof plans !== 'object') {
+      return res.status(400).json({ error: 'Invalid plans data' });
+    }
+    // Basic validation
+    for (const [key, plan] of Object.entries(plans)) {
+      if (!plan.durationDays || !plan.amount || typeof plan.durationDays !== 'number' || typeof plan.amount !== 'number') {
+        return res.status(400).json({ error: `Invalid plan structure for ${key}` });
+      }
+    }
+    await Setting.findOneAndUpdate(
+        { key: 'subscriptionPlans' },
+        { value: plans },
+        { upsert: true, new: true }
+    );
+    SUBSCRIPTION_PLANS = plans; // Update in-memory variable
+    res.json({
+      message: 'Subscription plans updated and saved successfully',
+      plans: SUBSCRIPTION_PLANS
+    });
+  } catch (error) {
+    console.error('Subscription update error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -699,14 +659,15 @@ app.put('/api/admin/users/:id/premium', authenticateAdmin, async (req, res) => {
     user.isPremium = isPremium;
 
     if (isPremium && subscriptionType) {
-        const plansString = await getSetting('subscription_packages', JSON.stringify([]));
-        const plans = JSON.parse(plansString);
-        const plan = plans.find(p => p.name.toLowerCase() === subscriptionType.toLowerCase());
+        const plansSetting = await Setting.findOne({ key: 'subscriptionPlans' });
+        const plans = plansSetting ? plansSetting.value : SUBSCRIPTION_PLANS;
+        const planKey = Object.keys(plans).find(key => key.toLowerCase() === subscriptionType.toLowerCase());
 
-        if (plan) {
+        if (planKey && plans[planKey]) {
+            const plan = plans[planKey];
             const now = new Date();
             const startDate = user.premiumExpiryDate > now ? user.premiumExpiryDate : now;
-            user.premiumExpiryDate = new Date(startDate.getTime() + plan.days * 24 * 60 * 60 * 1000);
+            user.premiumExpiryDate = new Date(startDate.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
         }
     } else if (!isPremium) {
         user.premiumExpiryDate = null;
@@ -772,38 +733,6 @@ app.put('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('User update error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// --- Admin Subscription Management Routes ----------------------------------
-app.get('/api/admin/subscriptions', authenticateAdmin, async (req, res) => {
-    const plansString = await getSetting('subscription_packages', JSON.stringify([]));
-    res.json({ plans: JSON.parse(plansString) });
-});
-
-app.put('/api/admin/subscriptions', authenticateAdmin, async (req, res) => {
-  try {
-    const { plans } = req.body;
-
-    if (!Array.isArray(plans)) {
-      return res.status(400).json({ error: 'Invalid plans data, must be an array.' });
-    }
-    
-    await Settings.findOneAndUpdate(
-        { key: 'subscription_packages' },
-        { value: JSON.stringify(plans) },
-        { upsert: true, new: true }
-    );
-    
-    setSettingInCache('subscription_packages', JSON.stringify(plans));
-
-    res.json({
-      message: 'Subscription plans updated and saved successfully',
-      plans: plans
-    });
-  } catch (error) {
-    console.error('Subscription update error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1084,14 +1013,15 @@ app.post('/api/payment/initiate-zenopay', authenticateToken, async (req, res) =>
         return res.status(400).json({ error: 'Invalid request. Name, phone, plan, and installationId are required.' });
     }
 
-    const plansString = await getSetting('subscription_packages', '[]');
-    const plans = JSON.parse(plansString);
-    const plan = plans.find(p => p.name.toLowerCase() === subscriptionType.toLowerCase());
+    const plansSetting = await Setting.findOne({ key: 'subscriptionPlans' });
+    const plans = plansSetting ? plansSetting.value : SUBSCRIPTION_PLANS;
+    const planKey = Object.keys(plans).find(key => key.toLowerCase() === subscriptionType.toLowerCase());
 
-    if (!plan) {
+    if (!planKey || !plans[planKey]) {
         return res.status(400).json({ error: `Subscription plan '${subscriptionType}' not found.` });
     }
 
+    const plan = plans[planKey];
     const orderId = uuidv4();
 
     // Create a new Payment record with all available identifiers
@@ -1102,8 +1032,8 @@ app.post('/api/payment/initiate-zenopay', authenticateToken, async (req, res) =>
         deviceId: deviceId, // The legacy identifier
         phoneNumber: phoneNumber, // The phone number used for payment
         customerName: customerName,
-        amount: plan.price,
-        subscriptionType: plan.name,
+        amount: plan.amount,
+        subscriptionType: subscriptionType,
         status: 'pending',
     }).save();
 
@@ -1111,7 +1041,7 @@ app.post('/api/payment/initiate-zenopay', authenticateToken, async (req, res) =>
         order_id: orderId,
         buyer_name: customerName,
         buyer_phone: phoneNumber,
-        amount: plan.price,
+        amount: plan.amount,
         webhook_url: `${process.env.YOUR_BACKEND_URL || 'https://pixtvmax-backend.onrender.com'}/api/payment/zenopay-webhook`
     };
 
@@ -1172,16 +1102,17 @@ app.post('/api/payment/zenopay-webhook', async (req, res) => {
             });
             
             if (user) {
-                const plansString = await getSetting('subscription_packages', '[]');
-                const plans = JSON.parse(plansString);
-                const plan = plans.find(p => p.name.toLowerCase() === payment.subscriptionType.toLowerCase());
+                const plansSetting = await Setting.findOne({ key: 'subscriptionPlans' });
+                const plans = plansSetting ? plansSetting.value : SUBSCRIPTION_PLANS;
+                const planKey = Object.keys(plans).find(p => p.toLowerCase() === payment.subscriptionType.toLowerCase());
                 
-                if(plan) {
+                if(planKey && plans[planKey]) {
+                    const plan = plans[planKey];
                     const now = new Date();
                     const startDate = user.premiumExpiryDate && user.premiumExpiryDate > now ? user.premiumExpiryDate : now;
 
                     user.isPremium = true;
-                    user.premiumExpiryDate = new Date(startDate.getTime() + plan.days * 24 * 60 * 60 * 1000);
+                    user.premiumExpiryDate = new Date(startDate.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
                     
                     if (!user.phoneNumber && payment.phoneNumber) {
                         user.phoneNumber = payment.phoneNumber;
