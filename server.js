@@ -46,8 +46,8 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // --- MongoDB Connection & Settings System ---------------------------------
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://mackdsilly:Ourfam%402019@cluster0.lj9wanf.mongodb.net/YourDatabaseName?retryWrites=true&w=majority&appName=Cluster0';
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-pixtv';
+const MONGODB_URI = process.env.MONGODB_URI || 'MONGODB_URI=mongodb+srv://burudani_admin:AqkY8hMXOLHQsyBi@burudanidb.s3dwuen.mongodb.net/?retryWrites=true&w=majority&appName=BurudaniDB';
+const JWT_SECRET = process.env.JWT_SECRET || 'Tatianna@2021';
 
 // --- PATCH START: Replaced with Burudani's High-Performance Settings Cache ---
 const settingsSchema = new mongoose.Schema({
