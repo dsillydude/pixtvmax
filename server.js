@@ -430,7 +430,7 @@ app.put('/api/admin/config', authenticateAdmin, async (req, res) => {
 app.get('/api/subscriptions/plans', async (req, res) => {
   try {
     // We try to find the plans saved in the database first.
-    const plansSetting = await Setting.findOne({ key: 'subscriptionPlans' });
+    const plansSetting = await Settings.findOne({ key: 'subscriptionPlans' });
 
     if (plansSetting && plansSetting.value) {
       // If found in DB, return them
