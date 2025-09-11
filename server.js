@@ -1,8 +1,9 @@
-/* * =================================================================
- * PixTv Max Backend Server - v2.4 (URL-based Banners)
+/*
+ * =================================================================
+ * PixTv Max Backend Server - v2.5 (Strict installationId)
  * -----------------------------------------------------------------
- * Patched banner creation/update to accept an image URL
- * instead of a file upload.
+ * Patched to completely remove deviceId and deviceFingerprint from
+ * all schemas and core logic, following the Burudani server model.
  * =================================================================
  */
 
@@ -30,22 +31,15 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
-
-// --- PATCH START: Trust proxy to get the correct IP address ---
-// This is important if your app is behind a load balancer or proxy.
 app.set('trust proxy', true);
-// --- PATCH END ---
 
-// Static file serving for uploaded images
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// --- MongoDB Connection & Settings System (Restored from working version) ---
+// --- MongoDB Connection & Settings System ---
 const MONGODB_URI = process.env.MONGODB_URI || 'MONGODB_URI=mongodb+srv://burudani_admin:AqkY8hMXOLHQsyBi@burudanidb.s3dwuen.mongodb.net/?retryWrites=true&w=majority&appName=BurudaniDB';
 const JWT_SECRET = process.env.JWT_SECRET || 'Tatianna@2021';
 
@@ -73,14 +67,13 @@ async function loadSettingsFromDatabase() {
 mongoose.connect(MONGODB_URI)
   .then(() => {
     console.log('✅ Connected to MongoDB');
-    loadSettingsFromDatabase(); // Load settings after connecting to DB
+    loadSettingsFromDatabase();
   })
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
 
-// --- Constants & Config for Paywall ------------------------------------
+// --- Constants & Config for Paywall ---
 const TRIAL_MINUTES = 0;
-// This is now just a default, the DB will be the source of truth.
 let SUBSCRIPTION_PLANS = {
     weekly: { durationDays: 7, amount: 1000 },
     monthly: { durationDays: 30, amount: 3000 },
@@ -89,24 +82,20 @@ let SUBSCRIPTION_PLANS = {
 
 // --- Database Models -------------------------------------------------------
 
-// --- PATCH START: Updated User Schema for Burudani's Auth Logic ---
 const UserSchema = new mongoose.Schema({
-  installationId: { type: String, unique: true, sparse: true }, // The new primary identifier from Burudani
+  installationId: { type: String, unique: true, sparse: true },
   email: { type: String, unique: true, sparse: true },
-  password: { type: String }, // For potential future email/password login
+  password: { type: String },
   phoneNumber: { type: String, unique: true, sparse: true },
-  deviceId: { type: String, index: true, sparse: true }, // Legacy identifier
-  deviceFingerprint: { type: String, index: true, sparse: true }, // Legacy identifier
+  // REMOVED: deviceId
+  // REMOVED: deviceFingerprint
   isPremium: { type: Boolean, default: false },
   premiumExpiryDate: { type: Date },
   lastLogin: { type: Date },
   isActive: { type: Boolean, default: true }
-}, { timestamps: true }); // Using timestamps for createdAt/updatedAt
-
+}, { timestamps: true });
 const User = mongoose.model('User', UserSchema);
-// --- PATCH END ---
 
-// Admin Schema
 const AdminSchema = new mongoose.Schema({
   id: { type: String, default: uuidv4, unique: true },
   username: { type: String, unique: true, required: true },
@@ -119,7 +108,6 @@ const AdminSchema = new mongoose.Schema({
 });
 const Admin = mongoose.model('Admin', AdminSchema);
 
-// Channel Schema
 const ChannelSchema = new mongoose.Schema({
   channelId: { type: String, unique: true, required: true },
   name: { type: String, required: true },
@@ -135,12 +123,11 @@ const ChannelSchema = new mongoose.Schema({
   isPremium: { type: Boolean, default: false },
   isActive: { type: Boolean, default: true },
   position: { type: Number, default: 0 },
-  assignedContent: [{ type: String }], // Array of content IDs
+  assignedContent: [{ type: String }],
   createdAt: { type: Date, default: Date.now }
 });
 const Channel = mongoose.model('Channel', ChannelSchema);
 
-// Content Schema
 const ContentSchema = new mongoose.Schema({
   id: { type: String, default: uuidv4, unique: true },
   title: { type: String, required: true },
@@ -162,46 +149,41 @@ const ContentSchema = new mongoose.Schema({
 });
 const Content = mongoose.model('Content', ContentSchema);
 
-// Hero Banner Schema
 const HeroBannerSchema = new mongoose.Schema({
   id: { type: String, default: uuidv4, unique: true },
   title: { type: String, required: true },
   description: { type: String },
   imageUrl: { type: String, required: true },
   actionType: { type: String, enum: ['channel', 'content', 'external'], required: true },
-  actionValue: { type: String }, // channelId, contentId, or external URL
+  actionValue: { type: String },
   isActive: { type: Boolean, default: true },
   position: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now }
 });
 const HeroBanner = mongoose.model('HeroBanner', HeroBannerSchema);
 
-// Payment Schema
 const PaymentSchema = new mongoose.Schema({
   orderId: { type: String, required: true, unique: true },
-  userId: { type: String }, // Can be linked via token, but installationId is primary
-  installationId: { type: String, index: true }, // NEW: The primary link to a user installation
-  deviceId: { type: String, index: true }, // Legacy identifier
-  phoneNumber: { type: String, index: true }, // Stored for user lookup on webhook
+  userId: { type: String },
+  installationId: { type: String, index: true },
+  // REMOVED: deviceId
+  phoneNumber: { type: String, index: true },
   customerName: { type: String },
   amount: { type: Number, required: true },
   currency: { type: String, default: 'TZS' },
   paymentMethod: { type: String, default: 'ZenoPay' },
   zenoTransactionId: { type: String },
   status: { type: String, enum: ['pending', 'completed', 'failed'], default: 'pending' },
-  subscriptionType: { type: String, required: true }, // No longer enum, uses value from settings
+  subscriptionType: { type: String, required: true },
   createdAt: { type: Date, default: Date.now }
 });
 const Payment = mongoose.model('Payment', PaymentSchema);
 
 // --- Helper Functions ------------------------------------------------------
-
-// --- PATCH START: Merged Helper from Burudani and PixTv ---
 function transformDoc(doc) {
   if (!doc) return null;
   const obj = doc.toObject ? doc.toObject() : { ...doc };
 
-  // Retain PixTv's specific channel transformation logic
   const isChannel = obj.hasOwnProperty('channelId') || obj.hasOwnProperty('playbackUrl');
   if (isChannel) {
     if (!obj.playbackUrl && obj.streamUrl) obj.playbackUrl = obj.streamUrl;
@@ -216,20 +198,17 @@ function transformDoc(doc) {
     delete obj.drmKey;
   }
 
-  // Use Burudani's standard transformations
   obj.id = obj._id?.toString() || obj.id;
   delete obj.password;
   delete obj._id;
   delete obj.__v;
   return obj;
 }
-// --- PATCH END ---
 
 function transformArray(docs) {
   return (docs || []).map(transformDoc);
 }
 
-// Generate JWT Token
 function generateToken(user, isAdmin = false) {
   const payload = isAdmin ? {
     adminId: user.id || user._id,
@@ -237,7 +216,7 @@ function generateToken(user, isAdmin = false) {
     role: user.role
   } : {
     userId: user.id || user._id,
-    deviceId: user.deviceId,
+    // REMOVED: deviceId from token payload
     isPremium: user.isPremium
   };
 
@@ -246,48 +225,30 @@ function generateToken(user, isAdmin = false) {
   });
 }
 
-// Middleware to verify JWT token
 function authenticateToken(req, res, next) {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
+  if (!token) return res.status(401).json({ error: 'Access token required' });
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
-    }
+    if (err) return res.status(403).json({ error: 'Invalid or expired token' });
     req.user = user;
     next();
   });
 }
 
-// Middleware to verify admin token
 function authenticateAdmin(req, res, next) {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Admin access token required' });
-  }
+  if (!token) return res.status(401).json({ error: 'Admin access token required' });
 
   jwt.verify(token, JWT_SECRET, async (err, decoded) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired admin token' });
-    }
-
-    if (!decoded.adminId) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
+    if (err) return res.status(403).json({ error: 'Invalid or expired admin token' });
+    if (!decoded.adminId) return res.status(403).json({ error: 'Admin access required' });
 
     try {
       const admin = await Admin.findOne({ id: decoded.adminId, isActive: true });
-      if (!admin) {
-        return res.status(403).json({ error: 'Admin not found or inactive' });
-      }
-
+      if (!admin) return res.status(403).json({ error: 'Admin not found or inactive' });
       req.admin = decoded;
       next();
     } catch (error) {
@@ -296,34 +257,24 @@ function authenticateAdmin(req, res, next) {
   });
 }
 
-// Multer configuration for file uploads
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/');
-  },
-  filename: function (req, file, cb) {
+  destination: (req, file, cb) => cb(null, 'uploads/'),
+  filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
   }
 });
-
 const upload = multer({
   storage: storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
-  },
-  fileFilter: function (req, file, cb) {
-    if (file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed!'), false);
-    }
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed!'), false);
   }
 });
 
 // --- API Routes ------------------------------------------------------------
-
-// --- App Configuration Routes (Restored from working version) ---
+// ... (Config and Subscription Plan routes remain the same) ...
 app.get('/api/config', async (req, res) => {
   try {
     const settings = await Setting.findOne({ key: 'appSettings' });
@@ -385,7 +336,6 @@ app.put('/api/admin/subscriptions', authenticateAdmin, async (req, res) => {
     if (!plans || typeof plans !== 'object') {
       return res.status(400).json({ error: 'Invalid plans data' });
     }
-    // Basic validation
     for (const [key, plan] of Object.entries(plans)) {
       if (!plan.durationDays || !plan.amount || typeof plan.durationDays !== 'number' || typeof plan.amount !== 'number') {
         return res.status(400).json({ error: `Invalid plan structure for ${key}` });
@@ -396,7 +346,7 @@ app.put('/api/admin/subscriptions', authenticateAdmin, async (req, res) => {
         { value: plans },
         { upsert: true, new: true }
     );
-    SUBSCRIPTION_PLANS = plans; // Update in-memory variable
+    SUBSCRIPTION_PLANS = plans;
     res.json({
       message: 'Subscription plans updated and saved successfully',
       plans: SUBSCRIPTION_PLANS
@@ -406,8 +356,6 @@ app.put('/api/admin/subscriptions', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
-// Health Check
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -416,87 +364,53 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// --- Authentication Routes (Existing) --------------------------------------
-
-// --- PATCH START: Replaced with Burudani's Unified Authentication Logic ---
+// MODIFIED: Simplified to be identical to Burudani server
 app.post('/api/auth/device-login', async (req, res) => {
   try {
-    const { installationId, deviceId } = req.body;
+    const { installationId } = req.body; // Only accept installationId
     if (!installationId) {
       return res.status(400).json({ error: 'installationId is required' });
     }
 
-    const userAgent = req.headers['user-agent'] || 'unknown';
-    const ip = req.ip;
-    const fingerprint = crypto.createHash('sha256')
-      .update((deviceId || '') + userAgent + ip)
-      .digest('hex');
-
-    let user = null;
-
-    // Step 1: Primary Search -> Look for user by installationId
-    user = await User.findOne({ installationId });
+    let user = await User.findOne({ installationId });
 
     if (user) {
-      // Found user. Update legacy info and last login.
-      user.deviceId = deviceId;
-      user.deviceFingerprint = fingerprint;
+      // User exists, just update last login
       user.lastLogin = new Date();
       await user.save();
     } else {
-      // Step 2: Fallback Search -> Look for legacy user by fingerprint/deviceId
-      user = await User.findOne({
-        $or: [
-          { deviceId: deviceId },
-          { deviceFingerprint: fingerprint }
-        ]
+      // User does not exist, create a new one
+      user = new User({
+        installationId,
+        lastLogin: new Date(),
+        isPremium: false
       });
-
-      if (user) {
-        // Step 3: MERGE/UPGRADE -> Found legacy user, add the new installationId
-        user.installationId = installationId;
-        user.lastLogin = new Date();
-        await user.save();
-      } else {
-        // Step 4: CREATE NEW USER -> Genuinely new installation
-        user = new User({
-          installationId,
-          deviceId,
-          deviceFingerprint: fingerprint,
-          lastLogin: new Date(),
-          isPremium: false
-        });
-        await user.save();
-      }
+      await user.save();
     }
 
     const token = generateToken(user);
     res.json({ message: 'Login successful', user: transformDoc(user), token });
 
   } catch (error) {
-    console.error('Unified device login error:', error);
+    console.error('Device login error:', error);
     if (error.code === 11000) {
       return res.status(500).json({ error: 'Duplicate key error. Please try again.' });
     }
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-// --- PATCH END ---
 
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
     const user = await User.findOne({ _id: req.user.userId });
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({ user: transformDoc(user) });
   } catch (error) {
     console.error('Profile fetch error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
-// --- Admin Authentication Routes -------------------------------------------
+// ... (Admin auth routes remain the same) ...
 
 app.post('/api/admin/login', async (req, res) => {
   try {
@@ -547,8 +461,7 @@ app.get('/api/admin/me', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
-// --- Admin User Management Routes ------------------------------------------
+// MODIFIED: Admin user search to remove deviceId
 app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
   try {
     const {
@@ -562,33 +475,21 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
     } = req.query;
 
     const filter = {};
-
     if (search) {
       filter.$or = [
         { email: { $regex: search, $options: 'i' } },
         { phoneNumber: { $regex: search, $options: 'i' } },
-        { deviceId: { $regex: search, $options: 'i' } }
+        { installationId: { $regex: search, $options: 'i' } } // Added installationId to search
       ];
     }
+    if (isPremium !== undefined) filter.isPremium = isPremium === 'true';
+    if (isActive !== undefined) filter.isActive = isActive === 'true';
 
-    if (isPremium !== undefined) {
-      filter.isPremium = isPremium === 'true';
-    }
-
-    if (isActive !== undefined) {
-      filter.isActive = isActive === 'true';
-    }
-
-    const sort = {};
-    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
-
+    const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const [users, total] = await Promise.all([
-      User.find(filter)
-        .sort(sort)
-        .skip(skip)
-        .limit(parseInt(limit)),
+      User.find(filter).sort(sort).skip(skip).limit(parseInt(limit)),
       User.countDocuments(filter)
     ]);
 
@@ -606,7 +507,7 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
+// ... (User stats, premium/status update, and user update routes remain the same) ...
 app.get('/api/admin/users/stats', authenticateAdmin, async (req, res) => {
   try {
     const [
@@ -736,7 +637,7 @@ app.put('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
+// ... (Payment stats and payments list routes remain the same) ...
 app.get('/api/admin/payments/stats', authenticateAdmin, async (req, res) => {
   try {
     const [
@@ -796,16 +697,11 @@ app.get('/api/admin/payments', authenticateAdmin, async (req, res) => {
     if (status) filter.status = status;
     if (subscriptionType) filter.subscriptionType = subscriptionType;
 
-    const sort = {};
-    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
-
+    const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const [payments, total] = await Promise.all([
-      Payment.find(filter)
-        .sort(sort)
-        .skip(skip)
-        .limit(parseInt(limit)),
+      Payment.find(filter).sort(sort).skip(skip).limit(parseInt(limit)),
       Payment.countDocuments(filter)
     ]);
 
@@ -823,8 +719,8 @@ app.get('/api/admin/payments', authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// ... (Banner routes remain the same as they are already correct) ...
 
-// --- Admin Channel Management Routes (Extended) ----------------------------
 app.put('/api/admin/channels/:id/content', authenticateAdmin, async (req, res) => {
   try {
     const { contentIds } = req.body;
@@ -875,8 +771,7 @@ app.get('/api/admin/banners', authenticateAdmin, async (req, res) => {
     if (isActive !== undefined) {
       filter.isActive = isActive === 'true';
     }
-    const sort = {};
-    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
     const banners = await HeroBanner.find(filter).sort(sort);
     res.json({
       banners: transformArray(banners),
@@ -888,7 +783,6 @@ app.get('/api/admin/banners', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Create new hero banner (Patched to use imageUrl)
 app.post('/api/admin/banners', authenticateAdmin, async (req, res) => {
   try {
     const { title, description, actionType, actionValue, imageUrl, isActive, position } = req.body;
@@ -919,7 +813,6 @@ app.post('/api/admin/banners', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Update hero banner (Patched to use imageUrl)
 app.put('/api/admin/banners/:id', authenticateAdmin, async (req, res) => {
   try {
     const { title, description, actionType, actionValue, imageUrl, isActive, position } = req.body;
@@ -953,7 +846,6 @@ app.put('/api/admin/banners/:id', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Delete hero banner
 app.delete('/api/admin/banners/:id', authenticateAdmin, async (req, res) => {
   try {
     const banner = await HeroBanner.findOneAndDelete({ id: req.params.id });
@@ -970,7 +862,6 @@ app.delete('/api/admin/banners/:id', authenticateAdmin, async (req, res) => {
 });
 
 
-// Image upload endpoint
 app.post('/api/admin/upload', authenticateAdmin, upload.single('image'), (req, res) => {
   try {
     if (!req.file) {
@@ -987,28 +878,10 @@ app.post('/api/admin/upload', authenticateAdmin, upload.single('image'), (req, r
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
-// --- Existing Routes (Content Management, Payment, etc.) -------------------
-app.post('/api/users/update-watch-time', authenticateToken, async (req, res) => {
-    try {
-        const user = await User.findById(req.user.userId);
-        if (!user) return res.status(404).json({ error: 'User not found' });
-
-        if (user.isPremium && (!user.premiumExpiryDate || new Date(user.premiumExpiryDate) > new Date())) {
-            return res.json({ success: true, message: 'User is premium.' });
-        } else {
-            return res.status(402).json({ error: 'PAYWALL', message: 'Premium required to stream.' });
-        }
-    } catch (error) {
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Payment Routes
+// MODIFIED: Payment initiation now only uses installationId
 app.post('/api/payment/initiate-zenopay', authenticateToken, async (req, res) => {
-    const { customerName, phoneNumber, subscriptionType, installationId, deviceId } = req.body;
+    const { customerName, phoneNumber, subscriptionType, installationId } = req.body;
     
-    // installationId is now the most important piece of info
     if (!customerName || !phoneNumber || !subscriptionType || !installationId) {
         return res.status(400).json({ error: 'Invalid request. Name, phone, plan, and installationId are required.' });
     }
@@ -1024,13 +897,11 @@ app.post('/api/payment/initiate-zenopay', authenticateToken, async (req, res) =>
     const plan = plans[planKey];
     const orderId = uuidv4();
 
-    // Create a new Payment record with all available identifiers
     await new Payment({
         orderId,
-        userId: req.user.userId, // The MongoDB _id from the token
-        installationId: installationId, // The new primary identifier
-        deviceId: deviceId, // The legacy identifier
-        phoneNumber: phoneNumber, // The phone number used for payment
+        userId: req.user.userId,
+        installationId: installationId,
+        phoneNumber: phoneNumber,
         customerName: customerName,
         amount: plan.amount,
         subscriptionType: subscriptionType,
@@ -1065,6 +936,7 @@ app.post('/api/payment/initiate-zenopay', authenticateToken, async (req, res) =>
     }
 });
 
+// MODIFIED: Webhook now only uses installationId and phoneNumber as a fallback
 app.post('/api/payment/zenopay-webhook', async (req, res) => {
     console.log('--- ZenoPay Webhook Received ---');
     console.log('Body:', req.body);
@@ -1092,14 +964,15 @@ app.post('/api/payment/zenopay-webhook', async (req, res) => {
             await payment.save();
             console.log(`Payment record for ${order_id} updated to 'completed'.`);
 
-            // NEW: Find the user using the most reliable identifiers from the payment record
-            const user = await User.findOne({
-              $or: [
-                { installationId: payment.installationId },
-                { phoneNumber: payment.phoneNumber },
-                { deviceId: payment.deviceId }
-              ].filter(cond => Object.values(cond)[0]) // Filters out any null/undefined identifiers
-            });
+            let user = null;
+            if (payment.installationId) {
+              user = await User.findOne({ installationId: payment.installationId });
+            }
+            // Fallback to phone number only if installationId fails to find a user
+            if (!user && payment.phoneNumber) {
+              console.log(`User not found by installationId, falling back to phoneNumber: ${payment.phoneNumber}`);
+              user = await User.findOne({ phoneNumber: payment.phoneNumber });
+            }
             
             if (user) {
                 const plansSetting = await Setting.findOne({ key: 'subscriptionPlans' });
@@ -1121,13 +994,13 @@ app.post('/api/payment/zenopay-webhook', async (req, res) => {
                     await user.save();
                     console.log(`SUCCESS: User ${user.id} upgraded to premium. New expiry: ${user.premiumExpiryDate}`);
                 } else {
-                     console.error(`CRITICAL: Could not find subscription plan '${payment.subscriptionType}' for completed payment ${order_id}.`);
+                    console.error(`CRITICAL: Could not find subscription plan '${payment.subscriptionType}' for completed payment ${order_id}.`);
                 }
             } else {
-                console.error(`CRITICAL: Could not find user for payment ${order_id}. Identifiers: instId=${payment.installationId}, phone=${payment.phoneNumber}, devId=${payment.deviceId}`);
+                console.error(`CRITICAL: Could not find user for payment ${order_id}. Identifiers: instId=${payment.installationId}, phone=${payment.phoneNumber}`);
             }
         } else {
-             console.log(`Received non-completed status '${payment_status}' for order ${order_id}. No action taken.`);
+            console.log(`Received non-completed status '${payment_status}' for order ${order_id}. No action taken.`);
         }
         res.status(200).send('Webhook processed successfully');
     } catch (error) {
@@ -1135,7 +1008,21 @@ app.post('/api/payment/zenopay-webhook', async (req, res) => {
         res.status(500).send('Internal Server Error');
     }
 });
+// ... (Content/Channel/Home/DRM routes remain the same) ...
+app.post('/api/users/update-watch-time', authenticateToken, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.userId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
 
+        if (user.isPremium && (!user.premiumExpiryDate || new Date(user.premiumExpiryDate) > new Date())) {
+            return res.json({ success: true, message: 'User is premium.' });
+        } else {
+            return res.status(402).json({ error: 'PAYWALL', message: 'Premium required to stream.' });
+        }
+    } catch (error) {
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
 // Channel CRUD
 app.post('/api/channels', authenticateAdmin, async (req, res) => {
     try {
@@ -1233,7 +1120,6 @@ app.delete('/api/content/:id', authenticateAdmin, async (req, res) => {
 // Home screen data
 app.get('/api/home-screen', async (req, res) => {
   try {
-      // Fetch all data in parallel for speed
       const [
         banners,
         sportsChannels,
@@ -1251,7 +1137,7 @@ app.get('/api/home-screen', async (req, res) => {
       const moreChannels = allChannels.filter(c => !sportsChannelIds.includes(c.channelId) && !tamthiliaChannelIds.includes(c.channelId));
 
       res.json({
-          banners: transformArray(banners), // ADDED BANNERS
+          banners: transformArray(banners),
           sportsChannels: transformArray(sportsChannels),
           tamthiliaContent: transformArray(tamthiliaChannels),
           moreChannels: transformArray(moreChannels)
@@ -1308,7 +1194,6 @@ app.post('/api/drm/token', authenticateToken, async (req, res) => {
 // Admin seeder
 app.post('/api/admin/seed', async (req, res) => {
   try {
-    // Create default admin if none exists
     const adminCount = await Admin.countDocuments();
     if (adminCount === 0) {
       const defaultAdmin = new Admin({
@@ -1327,7 +1212,6 @@ app.post('/api/admin/seed', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
 // --- Error Handling & Server Start -----------------------------------------
 app.use((req, res) => {
   res.status(404).json({ error: 'Endpoint not found' });
@@ -1340,7 +1224,7 @@ app.use((error, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 PixTv Max Backend server v2.4 (URL Banners) running on port ${PORT}`);
+  console.log(`🚀 PixTv Max Backend server v2.5 (Strict installationId) running on port ${PORT}`);
 });
 
 module.exports = app;
