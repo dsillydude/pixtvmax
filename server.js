@@ -391,10 +391,10 @@ let appSettings = {
 // PUBLIC ENDPOINT: For the main app to get the config
 app.get('/api/config', async (req, res) => {
   try {
-    const settings = await Setting.findOne({ key: 'appSettings' });
-    if (settings && settings.value) {
-      res.json(settings.value);
-    } else {
+    const settings = await Settings.findOne({ key: 'whatsapp_link' });
+if (settings && settings.value) {
+  res.json({ whatsappLink: settings.value });
+}else {
       // Fallback to a default if nothing is in the database
       res.json({ whatsappLink: 'https://wa.me/255712345678' });
     }
@@ -430,7 +430,7 @@ app.put('/api/admin/config', authenticateAdmin, async (req, res) => {
 app.get('/api/subscriptions/plans', async (req, res) => {
   try {
     // We try to find the plans saved in the database first.
-    const plansSetting = await Settings.findOne({ key: 'subscriptionPlans' });
+    const plansSetting = await Settings.findOne({ key: 'subscription_packages' });
 
     if (plansSetting && plansSetting.value) {
       // If found in DB, return them
