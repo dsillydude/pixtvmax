@@ -1213,6 +1213,26 @@ app.post('/api/admin/seed', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// --- HLS Wrapper Route (Quick Fix for .ts) ---
+app.get('/hls/:id/index.m3u8', (req, res) => {
+  const { id } = req.params;
+
+  // Point to your existing .ts file
+  const tsUrl = `https://lipopotv.live/${id}.ts`;
+
+  // Build a minimal HLS manifest that wraps the .ts
+  const manifest = `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:10
+#EXTINF:10,
+${tsUrl}
+#EXT-X-ENDLIST`;
+
+  res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+  res.send(manifest);
+});
+
 // --- Error Handling & Server Start -----------------------------------------
 app.use((req, res) => {
   res.status(404).json({ error: 'Endpoint not found' });
@@ -1227,5 +1247,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 PixTv Max Backend server v2.5 (Strict installationId) running on port ${PORT}`);
 });
-
 module.exports = app;
