@@ -912,6 +912,7 @@ app.post('/api/payment/initiate-zenopay', authenticateToken, async (req, res) =>
         order_id: orderId,
         buyer_name: customerName,
         buyer_phone: phoneNumber,
+        buyer_email: `${customerName.replace(/\s+/g, '.').toLowerCase()}@pixtvmax.tv`,
         amount: plan.amount,
         webhook_url: `${process.env.YOUR_BACKEND_URL || 'https://pixtvmax-backend.onrender.com'}/api/payment/zenopay-webhook`
     };
