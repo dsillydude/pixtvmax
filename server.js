@@ -40,8 +40,8 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // --- MongoDB Connection & Settings System ---
-const MONGODB_URI = process.env.MONGODB_URI || 'MONGODB_URI=mongodb+srv://burudani_admin:AqkY8hMXOLHQsyBi@burudanidb.s3dwuen.mongodb.net/?retryWrites=true&w=majority&appName=BurudaniDB';
-const JWT_SECRET = process.env.JWT_SECRET || 'Tatianna@2021';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://mackdsilly:Ourfam%402019@cluster0.lj9wanf.mongodb.net/YourDatabaseName?retryWrites=true&w=majority&appName=Cluster0';
+const JWT_SECRET = process.env.JWT_SECRET || '242663';
 
 const SettingSchema = new mongoose.Schema({
   key: { type: String, unique: true, required: true },
