@@ -209,6 +209,23 @@ function transformArray(docs) {
   return (docs || []).map(transformDoc);
 }
 
+function sanitizeEmail(email) {
+  if (!email) return 'user@pixtvmax.tv'; // fallback if missing
+
+  email = email.trim();
+
+  // Fix "name.@domain.com" → "name@domain.com"
+  email = email.replace(/\.@/, '@');
+
+  // Simple regex validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return 'user@pixtvmax.tv'; // fallback default if still invalid
+  }
+
+  return email;
+}
+
 function generateToken(user, isAdmin = false) {
   const payload = isAdmin ? {
     adminId: user.id || user._id,
@@ -912,7 +929,9 @@ app.post('/api/payment/initiate-zenopay', authenticateToken, async (req, res) =>
         order_id: orderId,
         buyer_name: customerName,
         buyer_phone: phoneNumber,
-        buyer_email: `${customerName.replace(/\s+/g, '.').toLowerCase()}@pixtvmax.tv`,
+        buyer_email: sanitizeEmail(
+  `${customerName.replace(/\s+/g, '.').toLowerCase()}@pixtvmax.tv`
+),
         amount: plan.amount,
         webhook_url: `${process.env.YOUR_BACKEND_URL || 'https://pixtvmax-backend.onrender.com'}/api/payment/zenopay-webhook`
     };
